@@ -4,8 +4,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);
 void MouseMove(HWND hwnd, WPARAM wp, LPARAM lp);
 void KeyPress(int keyCode);
 void initBackBuffer(HWND hwnd);
-void init_spheres();
-void free_memory();
+void initialise_csg();
 void initialize_memory();
 void move_camera(HWND hwnd);
 
@@ -23,9 +22,10 @@ int gpu_cpu_cnt = 1;
 
 unsigned int* cuda_buffer;
 unsigned int* cpu_buffer;
-spheres gpu_spheres, s;
+
 camera gpu_cam;
-light gpu_lights, l;
+light gpu_lights, cpu_lights;
+csg_scene cpu_scene, gpu_scene;
 
 float curr_x = .0f, curr_y = .0f;
 float prev_x = 0, prev_y = 0;
@@ -43,59 +43,27 @@ void initialize_memory()
 
 	checkCudaErrors(cudaMalloc((void**)&cuda_buffer, WIDTH * HEIGHT * sizeof(unsigned int)));
 
-	init_spheres();
+	initialise_csg();
 
 	gpu_cam = camera(make_float3(0, 0.7f, 10.7f), make_float3(0, 0, -1.0f) /*make_float3(0,0,0), make_float3(0,0,1)*/,
 		make_float3(0.0f, 1.0f, 0.0f), 30.0f, RATIO);
 }
 
-
-void render_cpu()
-{
-	for (int x = 0; x < WIDTH; ++x)
-	{
-		for (int y = 0; y < HEIGHT; ++y)
-		{
-			// ANTYALIASING
-			/*float3 c = make_float3(0, 0, 0);
-			ray r;
-			for (int i = 0; i < SAMPLES_PER_PIXEL; ++i)
-			{
-				r = gpu_cam.get_ray((float(x) + random_float()) / (WIDTH - 1), (float(HEIGHT - y) + random_float()) / (HEIGHT - 1));
-				c = c + ray_color(r, s, l);
-			}
-			c = c/SAMPLES_PER_PIXEL*/
-
-			ray r = gpu_cam.get_ray(float(x) / (WIDTH - 1), float(y) / (HEIGHT - 1));
-			float3 c = ray_color(r, s, l);
-
-			cpu_buffer[y * WIDTH + x] = compute_int_color(c);
-		}
-	}
-}
-
 void draw(HWND hwnd)
 {
 
-	dim3 blocksCount = dim3(WIDTH / framesX, HEIGHT / framesY);
-	dim3 threadsCount = dim3(framesX, framesY);
+	dim3 blocksCount = dim3(WIDTH, HEIGHT);
+	//dim3 threadsCount = dim3(, framesY);
 	float time;
 
-	if (GPU_RENDER)
-	{
-		render <<<blocksCount, threadsCount >> > (cuda_buffer, gpu_spheres, gpu_cam, gpu_lights, SPHERE_COUNT, WIDTH, HEIGHT);
-		cudaDeviceSynchronize();
-		cudaEventRecord(start_gpu_cpu, 0);
-		checkCudaErrors(cudaMemcpy(cpu_buffer, cuda_buffer, WIDTH * HEIGHT * sizeof(unsigned int), cudaMemcpyDeviceToHost));
-		cudaEventRecord(stop_gpu_cpu, 0);
-		cudaEventSynchronize(stop_render);
-		cudaEventElapsedTime(&time, start_gpu_cpu, stop_gpu_cpu);
-		time_gpu_cpu += time;
-	}
-	else
-	{
-		render_cpu();
-	}
+	render <<<blocksCount, 32, /* shared memory size */ >> > (cuda_buffer, gpu_spheres, gpu_cam, gpu_lights, SPHERE_COUNT, WIDTH, HEIGHT);
+	cudaDeviceSynchronize();
+	cudaEventRecord(start_gpu_cpu, 0);
+	checkCudaErrors(cudaMemcpy(cpu_buffer, cuda_buffer, WIDTH * HEIGHT * sizeof(unsigned int), cudaMemcpyDeviceToHost));
+	cudaEventRecord(stop_gpu_cpu, 0);
+	cudaEventSynchronize(stop_render);
+	cudaEventElapsedTime(&time, start_gpu_cpu, stop_gpu_cpu);
+	time_gpu_cpu += time;
 
 	SetBitmapBits(hBackBitmap, HEIGHT * WIDTH * sizeof(unsigned int), (const void*)(cpu_buffer));
 	BitBlt(GetDC(hwnd), 0, 0, WIDTH, HEIGHT, hBackDC, 0, 0, SRCCOPY);
@@ -279,51 +247,43 @@ void initBackBuffer(HWND hwnd) {
 }
 
 
-void init_spheres()
+void initialise_csg()
 {
-	int n = SPHERE_COUNT;
 	int m = LIGHT_COUNT;
 
-	s.color.r = new float[n];
-	s.color.g = new float[n];
-	s.color.b = new float[n];
+	int levels = 2;
+	int n = pow(2, levels);
 
-	checkCudaErrors(cudaMalloc((void**)&gpu_spheres.color.r, n * sizeof(float)));
-	checkCudaErrors(cudaMalloc((void**)&gpu_spheres.color.g, n * sizeof(float)));
-	checkCudaErrors(cudaMalloc((void**)&gpu_spheres.color.b, n * sizeof(float)));
+	//scene allocation
+	cpu_scene = scene_objects(levels);
 
-	s.pos.x = new float[n];
-	s.pos.y = new float[n];
-	s.pos.z = new float[n];
-
-	checkCudaErrors(cudaMalloc((void**)&gpu_spheres.pos.x, n * sizeof(float)));
-	checkCudaErrors(cudaMalloc((void**)&gpu_spheres.pos.y, n * sizeof(float)));
-	checkCudaErrors(cudaMalloc((void**)&gpu_spheres.pos.z, n * sizeof(float)));
-
-	s.radius = new float[n];
-	checkCudaErrors(cudaMalloc((void**)&gpu_spheres.radius, n * sizeof(float)));
-
-	s.ka = new float[n];
-	s.kd = new float[n];
-	s.ks = new float[n];
-	s.alpha = new int[n];
-	checkCudaErrors(cudaMalloc((void**)&gpu_spheres.ka, n * sizeof(float)));
-	checkCudaErrors(cudaMalloc((void**)&gpu_spheres.kd, n * sizeof(float)));
-	checkCudaErrors(cudaMalloc((void**)&gpu_spheres.ks, n * sizeof(float)));
-	checkCudaErrors(cudaMalloc((void**)&gpu_spheres.alpha, n * sizeof(float)));
+	checkCudaErrors(cudaMalloc((void**)&gpu_scene.objects.primitives.color.r, n * sizeof(float)));
+	checkCudaErrors(cudaMalloc((void**)&gpu_scene.objects.primitives.color.g, n * sizeof(float)));
+	checkCudaErrors(cudaMalloc((void**)&gpu_scene.objects.primitives.color.b, n * sizeof(float)));
+	checkCudaErrors(cudaMalloc((void**)&gpu_scene.objects.primitives.pos.x, n * sizeof(float)));
+	checkCudaErrors(cudaMalloc((void**)&gpu_scene.objects.primitives.pos.y, n * sizeof(float)));
+	checkCudaErrors(cudaMalloc((void**)&gpu_scene.objects.primitives.pos.z, n * sizeof(float)));
+	checkCudaErrors(cudaMalloc((void**)&gpu_scene.objects.primitives.radius, n * sizeof(float)));
+	checkCudaErrors(cudaMalloc((void**)&gpu_scene.objects.primitives.ka, n * sizeof(float)));
+	checkCudaErrors(cudaMalloc((void**)&gpu_scene.objects.primitives.kd, n * sizeof(float)));
+	checkCudaErrors(cudaMalloc((void**)&gpu_scene.objects.primitives.ks, n * sizeof(float)));
+	checkCudaErrors(cudaMalloc((void**)&gpu_scene.objects.primitives.alpha, n * sizeof(float)));
+	checkCudaErrors(cudaMalloc((void**)&gpu_scene.bounding.pos.x, n*sizeof(float)));
+	checkCudaErrors(cudaMalloc((void**)&gpu_scene.bounding.pos.y, n*sizeof(float)));
+	checkCudaErrors(cudaMalloc((void**)&gpu_scene.bounding.pos.z, n*sizeof(float)));
+	checkCudaErrors(cudaMalloc((void**)&gpu_scene.bounding.radius, n*sizeof(float)));
 
 
-
-	l.is.r = new float[m];
-	l.is.g = new float[m];
-	l.is.b = new float[m];
-	l.id.r = new float[m];
-	l.id.g = new float[m];
-	l.id.b = new float[m];
-
-	l.pos.x = new float[m];
-	l.pos.y = new float[m];
-	l.pos.z = new float[m];
+	// lights alocation
+	cpu_lights.is.r = new float[m];
+	cpu_lights.is.g = new float[m];
+	cpu_lights.is.b = new float[m];
+	cpu_lights.id.r = new float[m];
+	cpu_lights.id.g = new float[m];
+	cpu_lights.id.b = new float[m];
+	cpu_lights.pos.x = new float[m];
+	cpu_lights.pos.y = new float[m];
+	cpu_lights.pos.z = new float[m];
 
 	checkCudaErrors(cudaMalloc((void**)&gpu_lights.is.r, m * sizeof(float)));
 	checkCudaErrors(cudaMalloc((void**)&gpu_lights.is.g, m * sizeof(float)));
@@ -331,115 +291,56 @@ void init_spheres()
 	checkCudaErrors(cudaMalloc((void**)&gpu_lights.id.r, m * sizeof(float)));
 	checkCudaErrors(cudaMalloc((void**)&gpu_lights.id.g, m * sizeof(float)));
 	checkCudaErrors(cudaMalloc((void**)&gpu_lights.id.b, m * sizeof(float)));
-
 	checkCudaErrors(cudaMalloc((void**)&gpu_lights.pos.x, m * sizeof(float)));
 	checkCudaErrors(cudaMalloc((void**)&gpu_lights.pos.y, m * sizeof(float)));
 	checkCudaErrors(cudaMalloc((void**)&gpu_lights.pos.z, m * sizeof(float)));
 
-
-	for (int i = 0; i < n; ++i)
-	{
-		s.color.r[i] = random_float(0, 1);
-		s.color.g[i] = random_float(0, 1);
-		s.color.b[i] = random_float(0, 1);
-
-
-		s.pos.x[i] = SPREAD * RATIO * random_float(-1, 1);
-		s.pos.y[i] = SPREAD * random_float(-1, 1);
-		s.pos.z[i] = SPREAD * random_float(-1, 1);
-
-		s.radius[i] = 0.05f + random_float(0, 1) * 15.0f / 100.0f;
-
-		s.ka[i] = random_float(0.2f, 0.4f);
-		s.kd[i] = random_float(0.0f, 0.03f);
-		s.ks[i] = random_float(0.2f, 0.7f);
-		s.alpha[i] = random_float(10, 100);
-	}
-
 	for (int i = 0; i < m; ++i)
 	{
-		l.is.r[i] = random_float(0.0f, 1.0f);
-		l.is.g[i] = random_float(0.0f, 1.0f);
-		l.is.b[i] = random_float(0.0f, 1.0f);
-		l.id.r[i] = random_float(0.0f, 1.0f);
-		l.id.g[i] = random_float(0.0f, 1.0f);
-		l.id.b[i] = random_float(0.0f, 1.0f);
-
-		l.pos.x[i] = SPREAD * RATIO * random_float(-1.0f, 1.0f);
-		l.pos.y[i] = SPREAD * random_float(-1.0f, 1.0f);
-		l.pos.z[i] = SPREAD * random_float(-1.0f, 1.0f);
+		cpu_lights.is.r[i] = random_float(0.0f, 1.0f);
+		cpu_lights.is.g[i] = random_float(0.0f, 1.0f);
+		cpu_lights.is.b[i] = random_float(0.0f, 1.0f);
+		cpu_lights.id.r[i] = random_float(0.0f, 1.0f);
+		cpu_lights.id.g[i] = random_float(0.0f, 1.0f);
+		cpu_lights.id.b[i] = random_float(0.0f, 1.0f);
+		cpu_lights.pos.x[i] = SPREAD * RATIO * random_float(-1.0f, 1.0f);
+		cpu_lights.pos.y[i] = SPREAD * random_float(-1.0f, 1.0f);
+		cpu_lights.pos.z[i] = SPREAD * random_float(-1.0f, 1.0f);
 	}
 
 	cudaEventRecord(start_cpu_gpu, 0);
 
-	checkCudaErrors(cudaMemcpy(gpu_spheres.color.r, s.color.r, n * sizeof(float), cudaMemcpyHostToDevice));
-	checkCudaErrors(cudaMemcpy(gpu_spheres.color.g, s.color.g, n * sizeof(float), cudaMemcpyHostToDevice));
-	checkCudaErrors(cudaMemcpy(gpu_spheres.color.b, s.color.b, n * sizeof(float), cudaMemcpyHostToDevice));
-	checkCudaErrors(cudaMemcpy(gpu_spheres.radius, s.radius, n * sizeof(float), cudaMemcpyHostToDevice));
-	checkCudaErrors(cudaMemcpy(gpu_spheres.ka, s.ka, n * sizeof(float), cudaMemcpyHostToDevice));
-	checkCudaErrors(cudaMemcpy(gpu_spheres.kd, s.kd, n * sizeof(float), cudaMemcpyHostToDevice));
-	checkCudaErrors(cudaMemcpy(gpu_spheres.ks, s.ks, n * sizeof(float), cudaMemcpyHostToDevice));
-	checkCudaErrors(cudaMemcpy(gpu_spheres.alpha, s.alpha, n * sizeof(int), cudaMemcpyHostToDevice));
-	checkCudaErrors(cudaMemcpy(gpu_spheres.pos.x, s.pos.x, n * sizeof(float), cudaMemcpyHostToDevice));
-	checkCudaErrors(cudaMemcpy(gpu_spheres.pos.y, s.pos.y, n * sizeof(float), cudaMemcpyHostToDevice));
-	checkCudaErrors(cudaMemcpy(gpu_spheres.pos.z, s.pos.z, n * sizeof(float), cudaMemcpyHostToDevice));
+	// lights copy
+	checkCudaErrors(cudaMemcpy(gpu_lights.is.r, cpu_lights.is.r, m * sizeof(float), cudaMemcpyHostToDevice));
+	checkCudaErrors(cudaMemcpy(gpu_lights.is.g, cpu_lights.is.g, m * sizeof(float), cudaMemcpyHostToDevice));
+	checkCudaErrors(cudaMemcpy(gpu_lights.is.b, cpu_lights.is.b, m * sizeof(float), cudaMemcpyHostToDevice));
+	checkCudaErrors(cudaMemcpy(gpu_lights.id.r, cpu_lights.id.r, m * sizeof(float), cudaMemcpyHostToDevice));
+	checkCudaErrors(cudaMemcpy(gpu_lights.id.g, cpu_lights.id.g, m * sizeof(float), cudaMemcpyHostToDevice));
+	checkCudaErrors(cudaMemcpy(gpu_lights.id.b, cpu_lights.id.b, m * sizeof(float), cudaMemcpyHostToDevice));
+	checkCudaErrors(cudaMemcpy(gpu_lights.pos.x, cpu_lights.pos.x, m * sizeof(float), cudaMemcpyHostToDevice));
+	checkCudaErrors(cudaMemcpy(gpu_lights.pos.y, cpu_lights.pos.y, m * sizeof(float), cudaMemcpyHostToDevice));
+	checkCudaErrors(cudaMemcpy(gpu_lights.pos.z, cpu_lights.pos.z, m * sizeof(float), cudaMemcpyHostToDevice));
 
-	checkCudaErrors(cudaMemcpy(gpu_lights.is.r, l.is.r, m * sizeof(float), cudaMemcpyHostToDevice));
-	checkCudaErrors(cudaMemcpy(gpu_lights.is.g, l.is.g, m * sizeof(float), cudaMemcpyHostToDevice));
-	checkCudaErrors(cudaMemcpy(gpu_lights.is.b, l.is.b, m * sizeof(float), cudaMemcpyHostToDevice));
-	checkCudaErrors(cudaMemcpy(gpu_lights.id.r, l.id.r, m * sizeof(float), cudaMemcpyHostToDevice));
-	checkCudaErrors(cudaMemcpy(gpu_lights.id.g, l.id.g, m * sizeof(float), cudaMemcpyHostToDevice));
-	checkCudaErrors(cudaMemcpy(gpu_lights.id.b, l.id.b, m * sizeof(float), cudaMemcpyHostToDevice));
-
-	checkCudaErrors(cudaMemcpy(gpu_lights.pos.x, l.pos.x, m * sizeof(float), cudaMemcpyHostToDevice));
-	checkCudaErrors(cudaMemcpy(gpu_lights.pos.y, l.pos.y, m * sizeof(float), cudaMemcpyHostToDevice));
-	checkCudaErrors(cudaMemcpy(gpu_lights.pos.z, l.pos.z, m * sizeof(float), cudaMemcpyHostToDevice));
+	//scene copy
+	checkCudaErrors(cudaMemcpy(gpu_scene.objects.primitives.color.r, cpu_scene.objects.primitives.color.r, n * sizeof(float), cudaMemcpyHostToDevice));
+	checkCudaErrors(cudaMemcpy(gpu_scene.objects.primitives.color.g, cpu_scene.objects.primitives.color.g, n * sizeof(float), cudaMemcpyHostToDevice));
+	checkCudaErrors(cudaMemcpy(gpu_scene.objects.primitives.color.b, cpu_scene.objects.primitives.color.b, n * sizeof(float), cudaMemcpyHostToDevice));
+	checkCudaErrors(cudaMemcpy(gpu_scene.objects.primitives.pos.x, cpu_scene.objects.primitives.pos.x, n * sizeof(float), cudaMemcpyHostToDevice));
+	checkCudaErrors(cudaMemcpy(gpu_scene.objects.primitives.pos.y, cpu_scene.objects.primitives.pos.y, n * sizeof(float), cudaMemcpyHostToDevice));
+	checkCudaErrors(cudaMemcpy(gpu_scene.objects.primitives.pos.z, cpu_scene.objects.primitives.pos.z, n * sizeof(float), cudaMemcpyHostToDevice));
+	checkCudaErrors(cudaMemcpy(gpu_scene.objects.primitives.radius, cpu_scene.objects.primitives.radius, n * sizeof(float), cudaMemcpyHostToDevice));
+	checkCudaErrors(cudaMemcpy(gpu_scene.objects.primitives.ka, cpu_scene.objects.primitives.ka, n * sizeof(float), cudaMemcpyHostToDevice));
+	checkCudaErrors(cudaMemcpy(gpu_scene.objects.primitives.kd, cpu_scene.objects.primitives.kd, n * sizeof(float), cudaMemcpyHostToDevice));
+	checkCudaErrors(cudaMemcpy(gpu_scene.objects.primitives.ks, cpu_scene.objects.primitives.ks, n * sizeof(float), cudaMemcpyHostToDevice));
+	checkCudaErrors(cudaMemcpy(gpu_scene.objects.primitives.alpha, cpu_scene.objects.primitives.alpha, n * sizeof(int), cudaMemcpyHostToDevice));
+	checkCudaErrors(cudaMemcpy(gpu_scene.bounding.pos.x, cpu_scene.bounding.pos.x, n*sizeof(float), cudaMemcpyHostToDevice));
+	checkCudaErrors(cudaMemcpy(gpu_scene.bounding.pos.y, cpu_scene.bounding.pos.y, n*sizeof(float), cudaMemcpyHostToDevice));
+	checkCudaErrors(cudaMemcpy(gpu_scene.bounding.pos.z, cpu_scene.bounding.pos.z, n*sizeof(float), cudaMemcpyHostToDevice));
+	checkCudaErrors(cudaMemcpy(gpu_scene.bounding.radius, cpu_scene.bounding.radius, n*sizeof(float), cudaMemcpyHostToDevice));
 
 
 	cudaEventRecord(stop_cpu_gpu, 0);
 	cudaEventSynchronize(stop_render);
 	cudaEventElapsedTime(&time_cpu_gpu, start_cpu_gpu, stop_cpu_gpu);
-}
 
-void free_memory()
-{
-	delete [] s.color.r;
-	delete [] s.color.g;
-	delete [] s.color.b;
-	delete [] s.pos.x;
-	delete [] s.pos.y;
-	delete [] s.pos.z;
-	delete [] s.radius;
-	delete [] s.alpha;
-	delete [] s.kd;
-	delete [] s.ks;
-	delete [] l.is.r;
-	delete [] l.is.g;
-	delete [] l.is.b;
-	delete [] l.id.r;
-	delete [] l.id.g;
-	delete [] l.id.b;
-	delete [] l.pos.x;
-	delete [] l.pos.y;
-	delete [] l.pos.z;
-
-	checkCudaErrors(cudaFree(gpu_spheres.color.r));
-	checkCudaErrors(cudaFree(gpu_spheres.color.g));
-	checkCudaErrors(cudaFree(gpu_spheres.color.b));
-	checkCudaErrors(cudaFree(gpu_spheres.pos.x));
-	checkCudaErrors(cudaFree(gpu_spheres.pos.y));
-	checkCudaErrors(cudaFree(gpu_spheres.pos.z));
-	checkCudaErrors(cudaFree(gpu_spheres.radius));
-	checkCudaErrors(cudaFree(gpu_spheres.alpha));
-	checkCudaErrors(cudaFree(gpu_spheres.kd));
-	checkCudaErrors(cudaFree(gpu_spheres.ks));
-	checkCudaErrors(cudaFree(gpu_lights.is.r));
-	checkCudaErrors(cudaFree(gpu_lights.is.g));
-	checkCudaErrors(cudaFree(gpu_lights.is.b));
-	checkCudaErrors(cudaFree(gpu_lights.id.r));
-	checkCudaErrors(cudaFree(gpu_lights.id.g));
-	checkCudaErrors(cudaFree(gpu_lights.id.b));
-	checkCudaErrors(cudaFree(gpu_lights.pos.x));
-	checkCudaErrors(cudaFree(gpu_lights.pos.y));
-	checkCudaErrors(cudaFree(gpu_lights.pos.z));
 }

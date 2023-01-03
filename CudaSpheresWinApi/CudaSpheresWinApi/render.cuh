@@ -1,6 +1,5 @@
 #include "global.cuh"
 
-
 __device__ __host__ unsigned int compute_int_color(const float3& v)
 {
 	unsigned int color = unsigned int(v.z * 255);
@@ -61,22 +60,38 @@ __device__ __host__ float3 ray_color(const ray& r, const spheres& sphere, const 
 	return (1.0 - t) * make_float3(1, 1, 1) + t * make_float3(0.5f, 0.7f, 1.0f);
 }
 
-__global__ void render(unsigned int* mem_ptr, spheres sphere, camera cam, light lights, int n, int maxX, int maxY)
+
+__constant__ int csg_levels;
+
+__global__ void render(unsigned int* mem_ptr, camera cam, light lights, csg_scene scene, int n, int maxX, int maxY)
 {
-	int x = threadIdx.x + blockIdx.x * blockDim.x;
-	int y = threadIdx.y + blockIdx.y * blockDim.y;
+	int x = blockId.x;//threadIdx.x + blockIdx.x * blockDim.x;
+	int y = blockId.y;//threadIdx.y + blockIdx.y * blockDim.y;
 	if (x >= maxX || y >= maxY)
 		return;
+	int levels = csg_scene.levels;
 
-	// ANTiALLIASED try
-	/*float3 c = make_float3(1, 1, 1);
-	for (int i = 0; i < SAMPLES_PER_PIXEL; ++i)
-	{
-		ray r = cam.get_ray((float(x) + random_float()) / float(maxX - 1), (float(maxY - y) + random_float()) / float(maxY - 1));
-		c = c + ray_color(r, spheres, lights);
-	}
-	c = c / float(SAMPLES_PER_PIXEL);*/
 	ray r = cam.get_ray(float(x) / (maxX - 1), float(maxY - y) / (maxY - 1));
+
+	extern __shared__ int csg_ranges [];
+
+	int smallPow = pow(2, levels - 1);
+	int bigPow = pow(2, levels);
+
+	for(int i = smallPow - 1; i < bigPow - 1; i += 32)
+	{
+		if(i + threadIdx.x < bigPow - 1 )
+		{
+			int index = csg_scene.csg[i + threadIdx.x];
+			csg_scene.objects.primitives[index].hit_anything(r, 0, 1000, rec)
+		}
+	}
+
+	
+	
+
+	extern __shared__ int cgs_rays [];
+
 	float3 c = ray_color(r, sphere, lights);
 	mem_ptr[y * maxX + x] = compute_int_color(c);
 }
