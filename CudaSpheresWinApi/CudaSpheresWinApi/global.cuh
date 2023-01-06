@@ -45,41 +45,6 @@ struct hit_record {
 	int index; // indeks kuli ktorej dotyczy
 };
 
-// it must be 
-__device__ inline std::pair<float3, float3> evaluate_range(const std::pair<float3, float3>& range_l, const std::pair<float3, float3>& range_r, int operation)
-{
-	std::pair<float3, float3> result;
-
-	if(range_l.left > range_r.left)
-	{
-		auto temp = range_l;
-		range_l = range_r;
-		range_r = temp;
-	}
-
-	switch(operation)
-	{
-		// intersection
-		case 0:
-		if(range_l.right < range_r.left)
-		{
-			return std::make_pair()
-		}
-		break;
-		// sum
-		case 1:
-		break;
-		// left \ right
-		case 2:
-		break;
-		// right \ left
-		case 3:
-		break;
-		default:
-		break;
-	}
-}
-
 struct colors
 {
 	float* r;
@@ -152,8 +117,9 @@ struct spheres
 	__host__ __device__ bool hit(int i, const ray& r, double t_min, double t_max, hit_record& rec) const
 	{
 		float3 center = make_float3(pos.x[i], pos.y[i], pos.z[i]);
+		float3 oc = r.origin - center; 
 
-		float3 oc = r.origin - center; auto a = length_squared(r.direction);
+		auto a = length_squared(r.direction);
 		auto b = dot(oc, r.direction);
 		auto c = length_squared(oc) - radius[i] * radius[i];
 
