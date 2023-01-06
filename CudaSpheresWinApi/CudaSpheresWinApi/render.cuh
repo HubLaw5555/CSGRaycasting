@@ -8,11 +8,11 @@ __device__ __host__ unsigned int compute_int_color(const float3& v)
 	return color;
 }
 
-__device__ __host__ float3 phong_light(const light& lights, const spheres& sphere, const hit_record& hit)
+__device__ __host__ float3 phong_light(const light& lights, const spheres& sphere, int i, float3 N, float3 V)
 {
-	int i = hit.index;
-	float3 N = normalize(hit.normal);
-	float3 V = normalize(hit.v);
+	//int i = hit.index;
+	//float3 N = normalize(hit.normal);
+	//float3 V = normalize(hit.v);
 
 	float ka = sphere.ka[i];
 	float kd = sphere.kd[i];
@@ -56,14 +56,14 @@ __device__ float3 default_color(const ray& r)
 	return (1.0 - t) * make_float3(1, 1, 1) + t * make_float3(0.5f, 0.7f, 1.0f);
 }
 
-__device__ __host__ float3 ray_color(const ray& r, const spheres& sphere, const light& lights) {
-	hit_record rec;
-	if (sphere.hit_anything(r, 0, 1000, rec))  // 1000 is infinity
-	{
-		return phong_light(lights, sphere, rec);
-	}
-	return default_color(r);
-}
+// __device__ __host__ float3 ray_color(const ray& r, const spheres& sphere, const light& lights) {
+// 	hit_record rec;
+// 	if (sphere.hit_anything(r, 0, 1000, rec))  // 1000 is infinity
+// 	{
+// 		return phong_light(lights, sphere, rec);
+// 	}
+// 	return default_color(r);
+// }
 
 __device__ range_case_left_empty(const std::pair<float, float>& range_l, const std::pair<float, float>& range_r, int operation)
 {
@@ -200,6 +200,7 @@ __global__ void render(unsigned int* mem_ptr, camera cam, light lights, csg_scen
 	int * left_ranges_tree = csg_ranges;
 	int * right_ranges_tree = &csg_ranges[bigPow];
 	int * sph_indices = &csg_ranges[2*bigPow];
+	float3 * normals = &csg_ranges[3*bigPow];
 	
 	for(int i = smallPow - 1; i < bigPow - 1; i += 32)
 	{
@@ -211,6 +212,7 @@ __global__ void render(unsigned int* mem_ptr, camera cam, light lights, csg_scen
 				left_ranges_tree[i] = rec.t1;
 				right_ranges_tree[i] = rec.t2;
 				sph_indices[i] = index;
+				normals[index] = rec.normal;
 			}
 			else 
 			{
@@ -263,7 +265,7 @@ __global__ void render(unsigned int* mem_ptr, camera cam, light lights, csg_scen
 		}
 	}
 
-	float3 c = phong_light(lights, sphere, rec); //ray_color(r, sphere, lights);
+	float3 c = phong_light(lights, csg_scene.primitives, sph_indices[0], normals[sph_indices[0]], -1*r.direction); //ray_color(r, sphere, lights);
 	mem_ptr[y * maxX + x] = compute_int_color(c);
 }
 
