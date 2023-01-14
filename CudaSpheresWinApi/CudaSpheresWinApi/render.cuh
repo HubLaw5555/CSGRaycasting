@@ -241,9 +241,9 @@ __global__ void render(unsigned int* mem_ptr, camera cam, light lights, csg_scen
 
 	if (!shouldEnd)
 	{
-		int smallPow = pow(2, levels - 1);
-		int bigPow = pow(2, levels);
-
+		int smallPow = pow(2, levels - 1); // 2
+		int bigPow = pow(2, levels); // 4
+		//memset(csg_ranges, 1, (bigPow - 1) * (sizeof(float) * 2 + sizeof(int) + sizeof(float3)));
 		float* left_ranges_tree = (float*)csg_ranges;
 		float* right_ranges_tree = (float*)&csg_ranges[bigPow];
 		int* sph_indices = (int*)&csg_ranges[2 * bigPow - 1];
@@ -299,8 +299,8 @@ __global__ void render(unsigned int* mem_ptr, camera cam, light lights, csg_scen
 						bool leftSph, rightSph;
 						// evaluate range works if one range is non-empty
 						float_pair range = evaluate_range(
-							make_pair(left_ranges_tree[left], right_ranges_tree[left]),
-							make_pair(left_ranges_tree[right], right_ranges_tree[right]),
+							float_pair(left_ranges_tree[left], right_ranges_tree[left]),
+							float_pair(left_ranges_tree[right], right_ranges_tree[right]),
 							scene.csg[realIndex], leftSph, rightSph);
 
 
@@ -333,13 +333,13 @@ __global__ void render(unsigned int* mem_ptr, camera cam, light lights, csg_scen
 		{
 			if (left_ranges_tree[0] == -1 || right_ranges_tree[0] == -1)
 			{
-				mem_ptr[y * maxX + x] = compute_int_color(/*default_color(r)*/make_float3(1,0,0));
-				//mem_ptr[y * maxX + x] = compute_int_color(default_color(r));
+				//mem_ptr[y * maxX + x] = compute_int_color(/*default_color(r)*/make_float3(1,0,0));
+				mem_ptr[y * maxX + x] = compute_int_color(default_color(r));
 			}
 			else
 			{
 				float3 c = phong_light(lights, scene.objects, sph_indices[0], normals[sph_indices[0]], -1 * r.direction, r.at(left_ranges_tree[0])); //ray_color(r, sphere, lights);
-				mem_ptr[y * maxX + x] = compute_int_color(/*c*/make_float3(0,1,0));
+				mem_ptr[y * maxX + x] = compute_int_color(c);
 			}
 		}
 	}
