@@ -11,14 +11,18 @@
 #include <utility>
 
 
-#ifndef CUDACC
-#define CUDACC
-#endif
+//#ifndef CUDACC
+//#define CUDACC
+//#endif
 #include "cuda_runtime.h"
 #include "device_launch_parameters.h"
 #include <cuda.h>
 #include <device_functions.h>
 #include <cuda_runtime_api.h>
+
+#ifdef __INTELLISENSE__
+void __syncthreads();
+#endif
 
 //////// helper_cuda.h check error macro ///////
 
@@ -45,6 +49,7 @@ void check(T result, char const* const func, const char* const file,
 struct float_pair
 {
 	float first, second;
+	__host__ __device__ float_pair(float f, float s) : first(f), second(s) {}
 };
 
 __device__ __host__ inline double random_float()
@@ -79,9 +84,7 @@ __device__ __host__ float fastPow(float num, int exp)
 
 __device__ float_pair make_pair(float l, float r)
 {
-	float_pair p;
-	p.first = l;
-	p.second = r;
+	return make_pair(l, r);
 }
 
 

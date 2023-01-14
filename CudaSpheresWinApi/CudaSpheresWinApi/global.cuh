@@ -97,13 +97,14 @@ struct spheres
 		auto c = length_squared(oc) - radius[i] * radius[i];
 
 		auto discriminant = b * b - a * c;
-		if (discriminant < 0)
+		if (discriminant < -EPS)
 			return false;
 
-		if (discriminant > EPS)
+		if(discriminant >= EPS)
 		{
 			auto sdet = sqrtf(discriminant);
 
+			// always root1 >= root2
 			auto root1 = (-b - sdet) / a;
 			auto root2 = (-b + sdet) / a;
 
@@ -118,31 +119,32 @@ struct spheres
 			if ((root1 < t_min && root2 < t_min) || (root1 > t_max && root2 > t_max))
 				return false;
 
-			if (root1 < t_min)
+			/*if (root1 < t_min)
 				root1 = t_min + EPS;
-			if (root2 < t_max)
-				root2 = t_max;
+			if (root2 > t_max)
+				root2 = t_max;*/
+			if (root2 < t_min || root2 > t_max)
+				return false;
 
 			// if (root < t_min || t_max < root) {
 			// 	root = (-b + sdet) / a;
 			// 	if (root < t_min || t_max < root)
 			// 		return false;
 
-			rec.range_l = r.at(root1);
-			rec.range_r = r.at(root2);
 			rec.t1 = root1;
 			rec.t2 = root2;
 		}
 		else
 		{
-			rec.range_l = rec.range_r = r.at(-b / a);
-			rec.t1 = rec.t2 = -b / a;
+			rec.t1 = -b / a - EPS;
+			rec.t2 = -b / a + EPS;
 		}
 
+		rec.range_l = r.at(rec.t1);
+		rec.range_r = r.at(rec.t2);
 
 		rec.v = -1 * r.direction;
 		rec.index = i;
-		//rec.p = r.at(rec.t);
 		rec.normal = (rec.range_l - center) / radius[i];
 
 		return true;
@@ -199,6 +201,7 @@ struct csg_scene
 		evaluate_nodes_count();
 
 		csg = new int[nodesCount];
+		memset(csg, -1, nodesCount);
 
 		objects.allocate(nodesCount);
 

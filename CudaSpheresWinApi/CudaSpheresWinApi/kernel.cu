@@ -51,7 +51,7 @@ void initialize_memory()
 
 	initialise_csg();
 	cpu_scene.calculate_bounding_boxes();
-	float x1 = cpu_scene.bounding.pos.x[0];
+	/*float x1 = cpu_scene.bounding.pos.x[0];
 	float y1 = cpu_scene.bounding.pos.y[0];
 	float z1 = cpu_scene.bounding.pos.z[0];
 	float x2 = cpu_scene.bounding.pos.x[1];
@@ -59,7 +59,7 @@ void initialize_memory()
 	float z2 = cpu_scene.bounding.pos.z[1];
 
 	float r1 = cpu_scene.bounding.radius[0];
-	float r2 = cpu_scene.bounding.radius[1];
+	float r2 = cpu_scene.bounding.radius[1];*/
 	copy_scene_to_gpu(2);
 
 	gpu_cam = camera(make_float3(0, 0.7f, 10.7f), make_float3(0, 0, -1.0f) /*make_float3(0,0,0), make_float3(0,0,1)*/,
@@ -341,23 +341,23 @@ void initialise_csg()
 
 	cpu_scene.objects.primitives.pos.x[0] =
 		cpu_scene.objects.primitives.pos.y[0] =
-		cpu_scene.objects.primitives.pos.z[0] = 0;
+		cpu_scene.objects.primitives.pos.z[0] = 0.0f;
 
 
 	cpu_scene.objects.primitives.pos.x[1] = 
 		cpu_scene.objects.primitives.pos.y[1] =
 		cpu_scene.objects.primitives.pos.z[1] = 1.0f;
 
-	cpu_scene.objects.primitives.radius[0] = 0.7;
-	cpu_scene.objects.primitives.radius[1] = 0.4;
+	cpu_scene.objects.primitives.radius[0] = 1.0f;
+	cpu_scene.objects.primitives.radius[1] = 1.0f;
 
-	cpu_scene.csg[0] = 2;
+	cpu_scene.csg[0] = 0;
 }
 
 void copy_scene_to_gpu(int levels)
 {
-	int n = pow(2, levels - 1);
-	int nodes = pow(2, levels) - 1;
+	int n = pow(2, levels - 1); // spheres count
+	int nodes = pow(2, levels) - 1; // nodes count
 	int m = LIGHT_COUNT;
 	cudaEventRecord(start_cpu_gpu, 0);
 	// lights copy

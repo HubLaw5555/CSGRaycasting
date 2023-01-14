@@ -8,7 +8,7 @@ __device__ __host__ unsigned int compute_int_color(const float3& v)
 	return color;
 }
 
-__device__ __host__ float3 phong_light(const light& lights, const scene_objects& sphere, int i, float3 N, float3 V)
+__device__ __host__ float3 phong_light(const light& lights, const scene_objects& sphere, int i, float3 N, float3 V, float3 pos)
 {
 	//int i = hit.index;
 	//float3 N = normalize(hit.normal);
@@ -22,7 +22,7 @@ __device__ __host__ float3 phong_light(const light& lights, const scene_objects&
 	float3 sphereColor = make_float3(sphere.color.r[i], sphere.color.g[i], sphere.color.b[i]);
 	float3 difuseColor = make_float3(0, 0, 0);
 	float3 specularColor = make_float3(0, 0, 0);
-	float3 pos = make_float3(sphere.primitives.pos.x[i], sphere.primitives.pos.y[i], sphere.primitives.pos.z[i]);
+	//float3 pos = make_float3(sphere.primitives.pos.x[i], sphere.primitives.pos.y[i], sphere.primitives.pos.z[i]);
 
 	for (int j = 0; j < LIGHT_COUNT; ++j)
 	{
@@ -70,48 +70,65 @@ __device__ float_pair range_case_left_empty(const float_pair& range_l, const flo
 	switch (operation)
 	{
 	case 0:
-		return range_l;
-	break;
+		return float_pair(-1, -1);
+		break;
 	case 1:
 		return range_r;
-	break;
+		break;
 	case 2:
-		return range_l;
-	break;
+		return float_pair(-1, -1);
+		break;
 	case 3:
 		return range_r;
-	break;
+		break;
 	default:
-		return range_l;
-	break;
+		return float_pair(-1, -1);
+		break;
 	}
+
+	// the same is return (operation%2 == 0 ? float_pair(-1,-1) : range_r); xd
 }
 
 
 // isLeft - out parameter
 // if true, then we should consider left sphere with color, normal etc.
+// before use please put non empty range in range_l if such exists
 __device__ inline float_pair evaluate_range(float_pair& range_l, float_pair& range_r, int operation, bool& isLeft, bool& isRight)
 {
-	if (range_l.first == -1)
+	// if both empty return empty range
+	// but it should not happen xd
+	if (range_l.first == -1 && range_r.first == -1)
 	{
-		isLeft = false;
-		isRight = true;
-		return range_case_left_empty(range_l, range_r, operation);
+		return float_pair(-1, -1);
 	}
-	else if (range_r.first == -1)
+
+	if (range_r.first == -1)
 	{
 		isLeft = true;
 		isRight = false;
 		return range_case_left_empty(range_r, range_l, operation);
 	}
+	else if (range_l.first == -1) // it should not happen too
+	{
+		isLeft = false;
+		isRight = true;
+		return range_case_left_empty(range_l, range_r, operation);
+	}
 
+	// these bools marks if we
+	// have switched left with right
 	bool realLeft = true;
 	bool realRight = true;
+
+	// it should be that left starts
+	// not further than right
 	if (range_l.first > range_r.first)
 	{
 		auto temp = range_l;
 		range_l = range_r;
 		range_r = temp;
+
+		// false means we switched left with right
 		realLeft = false;
 		realRight = false;
 	}
@@ -129,6 +146,8 @@ __device__ inline float_pair evaluate_range(float_pair& range_l, float_pair& ran
 				isRight = realRight; // whatever
 				return make_pair(-1, -1); // no intersection
 			}
+
+
 			isLeft = !realLeft;
 			isRight = range_l.second < range_r.second ? !realRight : realRight;
 			return make_pair(range_r.first, min(range_l.second, range_r.second));
@@ -187,6 +206,13 @@ __device__ inline float_pair evaluate_range(float_pair& range_l, float_pair& ran
 
 __global__ void render(unsigned int* mem_ptr, camera cam, light lights, csg_scene scene, int maxX, int maxY)
 {
+	extern __shared__ float csg_ranges[];
+	__shared__ bool shouldEnd;// = false;
+	if (threadIdx.x == 0)
+	{
+		shouldEnd = false;
+	}
+
 	int x = blockIdx.x;//threadIdx.x + blockIdx.x * blockDim.x;
 	int y = blockIdx.y;//threadIdx.y + blockIdx.y * blockDim.y;
 	if (x >= maxX || y >= maxY)
@@ -201,91 +227,121 @@ __global__ void render(unsigned int* mem_ptr, camera cam, light lights, csg_scen
 	ray r = cam.get_ray(float(x) / (maxX - 1), float(maxY - y) / (maxY - 1));
 
 	hit_record rec;
-	if (!scene.bounding.hit(0, r, 0, 1000, rec))
+
+
+	//bool shouldEnd = false;
+	if (threadIdx.x == 0)
 	{
-		mem_ptr[y * maxX + x] = compute_int_color(default_color(r));
-		return;
-	}
-
-
-	int smallPow = pow(2, levels - 1);
-	int bigPow = pow(2, levels);
-
-	extern __shared__ float csg_ranges[];
-
-	float* left_ranges_tree = (float*)csg_ranges;
-	float* right_ranges_tree = (float*)&csg_ranges[bigPow];
-	int* sph_indices = (int*)&csg_ranges[2 * bigPow - 1];
-	float3* normals = (float3*)&csg_ranges[3 * bigPow - 2];
-	int cntr = 0;
-	for (int i = smallPow - 1; i < bigPow - 1; i += 32)
-	{
-		if (i + threadIdx.x < bigPow - 1)
+		if (!scene.bounding.hit(0, r, 0, 1000, rec))
 		{
-			int index = scene.csg[i + threadIdx.x];
-			if (scene.objects.primitives.hit(index, r, 0, 1000, rec))
-			{
-				left_ranges_tree[i] = rec.t1;
-				right_ranges_tree[i] = rec.t2;
-				sph_indices[i] = index;
-				normals[index] = rec.normal;
-			}
-			else
-			{
-				left_ranges_tree[i] = -1;
-				right_ranges_tree[i] = -1;
-			}
+			mem_ptr[y * maxX + x] = compute_int_color(default_color(r));
+			shouldEnd = true;
 		}
-		cntr++;
-		while (cntr < 32) {}
-		cntr = 0;
 	}
-	cntr = 0;
-	for (int i = levels - 2; i >= 0; --i)
+
+	if (!shouldEnd)
 	{
-		for (int j = pow(2, i) - 1; i < pow(2, i + 1) - 1; i += 32)
+		int smallPow = pow(2, levels - 1);
+		int bigPow = pow(2, levels);
+
+		float* left_ranges_tree = (float*)csg_ranges;
+		float* right_ranges_tree = (float*)&csg_ranges[bigPow];
+		int* sph_indices = (int*)&csg_ranges[2 * bigPow - 1];
+		float3* normals = (float3*)&csg_ranges[3 * bigPow - 2];
+
+		for (int i = smallPow - 1; i < bigPow - 1; i += 32)
 		{
-			if (j + threadIdx.x < pow(2, i + 1) - 2)
+			int realIndex = i + (int)threadIdx.x;
+			if (realIndex < bigPow - 1)
 			{
-				int left = 2 * j + 1;
-				int right = 2 * j + 2;
-
-				if (left_ranges_tree[left] != -1 || left_ranges_tree[right] != -1)
+				int index = scene.csg[realIndex];
+				if (scene.objects.primitives.hit(index, r, 0, 1000, rec))
 				{
-					bool leftSph, rightSph;
-					float_pair range = evaluate_range(
-						make_pair(left_ranges_tree[left], right_ranges_tree[left]),
-						make_pair(left_ranges_tree[right], right_ranges_tree[right]),
-						scene.csg[j], leftSph, rightSph);
-
-					if (range.first > range.second)
-					{
-						auto temp = range.first;
-						range.first = range.second;
-						range.second = temp;
-
-						bool s_temp = leftSph;
-						leftSph = rightSph;
-						rightSph = s_temp;
-					}
-
-					left_ranges_tree[j] = range.first;
-					right_ranges_tree[j] = range.second;
-					sph_indices[j] = leftSph ? sph_indices[left] : sph_indices[right];
+					left_ranges_tree[realIndex] = rec.t1;
+					right_ranges_tree[realIndex] = rec.t2;
+					sph_indices[realIndex] = index;
+					normals[index] = rec.normal;
 				}
 				else
 				{
-					left_ranges_tree[j] = -1;
-					right_ranges_tree[j] = -1;
+					left_ranges_tree[realIndex] = -1;
+					right_ranges_tree[realIndex] = -1;
 				}
 			}
-			cntr++;
-			while (cntr < 32) {}
-			cntr = 0;
+		}
+
+		for (int i = levels - 2; i >= 0; --i)
+		{
+			int upperBound = pow(2, i + 1) - 1;
+			for (int j = pow(2, i) - 1; j < upperBound; j += 32)
+			{
+				int realIndex = j + (int)threadIdx.x;
+				if (realIndex < upperBound)
+				{
+					int left = 2 * realIndex + 1;
+					int right = 2 * realIndex + 2;
+
+					// if left ranges are empy
+					// switch(left, right) to have in left one 
+					// non empty range if that exist
+					if (left_ranges_tree[left] == -1)
+					{
+						int temp = left;
+						left = right;
+						right = temp;
+					}
+
+
+					// if left is empty, then both are empty 
+					// since switch before
+					if (left_ranges_tree[left] != -1)
+					{
+						bool leftSph, rightSph;
+						// evaluate range works if one range is non-empty
+						float_pair range = evaluate_range(
+							make_pair(left_ranges_tree[left], right_ranges_tree[left]),
+							make_pair(left_ranges_tree[right], right_ranges_tree[right]),
+							scene.csg[realIndex], leftSph, rightSph);
+
+
+						// should never happen
+						if (range.first > range.second)
+						{
+							float temp = range.first;
+							range.first = range.second;
+							range.second = temp;
+
+							bool s_temp = leftSph;
+							leftSph = rightSph;
+							rightSph = s_temp;
+						}
+
+
+						left_ranges_tree[realIndex] = range.first;
+						right_ranges_tree[realIndex] = range.second;
+						sph_indices[realIndex] = leftSph ? sph_indices[left] : sph_indices[right];
+					}
+					else
+					{
+						left_ranges_tree[realIndex] = -1;
+						right_ranges_tree[realIndex] = -1;
+					}
+				}
+			}
+		}
+		if (threadIdx.x == 0)
+		{
+			if (left_ranges_tree[0] == -1 || right_ranges_tree[0] == -1)
+			{
+				mem_ptr[y * maxX + x] = compute_int_color(/*default_color(r)*/make_float3(1,0,0));
+				//mem_ptr[y * maxX + x] = compute_int_color(default_color(r));
+			}
+			else
+			{
+				float3 c = phong_light(lights, scene.objects, sph_indices[0], normals[sph_indices[0]], -1 * r.direction, r.at(left_ranges_tree[0])); //ray_color(r, sphere, lights);
+				mem_ptr[y * maxX + x] = compute_int_color(/*c*/make_float3(0,1,0));
+			}
 		}
 	}
-
-	float3 c = phong_light(lights, scene.objects, sph_indices[0], normals[sph_indices[0]], -1 * r.direction); //ray_color(r, sphere, lights);
-	mem_ptr[y * maxX + x] = compute_int_color(c);
 }
 
